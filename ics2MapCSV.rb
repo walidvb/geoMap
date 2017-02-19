@@ -1,36 +1,94 @@
 require 'icalendar'
 require 'csv'
+class Event
+
+  attr_accessor :location
+  attr_accessor :description
+  attr_accessor :title
+  attr_accessor :trip
+
+  def initialize event
+    @event = event
+    self._process
+  end
+
+  def to_row
+    # ["address", "title", "description", 'trip', "original_description"]
+    [
+      @location,
+      "#{start} – #{location}",
+      @description,
+      @trip,
+      @event.summary,
+    ]
+  end
+
+  def start
+    @event.dtstart.strftime(date_format)
+  end
+
+  def isAnArrival?
+    /flight|stay/i.match(@event.summary)
+  end
+
+  %W{summary dtstart dtend}.each do |method|
+    define_method(method) { @event.send(method) }
+  end
+
+  def _process
+    if /flight to /i.match(@event.summary)
+      @location = /flight to (.*)/i.match(@event.summary)[1]
+      @description = "Flight from #{@event.location} to #{@location}"
+    else
+      @description =  @event.summary
+      @location = @event.location
+    end
+  end
+
+  def date_format
+    "%a %d %b %y"
+  end
+
+end
 
 
 class Cal2MapCSV
-
-  def run
+  def initialize
     @events_count = 0
     @mapped_count = 0
     cal_file = File.open("cal.ics")
     cals = Icalendar::Calendar.parse(cal_file)
     cal = cals.first
-    now = Date.today
+
     CSV.open("file.csv", "wb") do |csv|
-      csv << ["address", "title", "description", 'original_summary']
+      csv << ["address", "title", "description", 'trip', "original_description"]
       @events_count = cal.events.size
       add_all_events cal.events, csv
     end
-    p "#{@events_count} events found, #{@mapped_count} imported”"
+    p "#{@events_count} events found, #{@mapped_count} exported, #{@trips_count} trips found"
 
   end
 
 
   def add_all_events events, csv
     last_location = "rdm"
-    events.each do |event|
+    @trips_count = 0
+    events.each do |ev|
+      event = Event.new ev
       if selected? event
-        p "#{last_location} | #{get_location(event)}"
-        if !/#{last_location}/.match(get_location(event))
-          add_event event, csv
+        if trip_started = @current_trip.nil?
+          @current_trip = @trips_count
+          @trips_count += 1
+        end
+        if !/#{last_location}/.match(event.location)
+          event.trip = @current_trip
+          add_event event, @current_trip, csv
           @mapped_count+=1
         end
-        last_location = get_location(event)
+        last_location = event.location
+        if /genev|gva/i.match(last_location)
+          @current_trip = nil
+        end
       end
     end
   end
@@ -38,33 +96,16 @@ class Cal2MapCSV
 
   private
 
-  def add_event event, csv
-    sum = event.summary
-    row = [
-      get_location(event),
-      event.dtstart.strftime("%a %d %b %y"),
-      event.summary,
-      sum
-    ]
+  def add_event event, trip, csv,
+    row = event.to_row
     csv << row
   end
 
   def selected? event
-    /flight|stay/i.match(event.summary) &&
+    event.isAnArrival? &&
       (location = event.location) &&
         !location.empty?
-  end
-
-  def get_location event
-    if /flight to /i.match(event.summary)
-      real_location = /flight to (.*)/i.match(event.summary)[1]
-      event.summary = "Flight from #{real_location} to #{event.location}"
-      real_location
-    else
-      event.location
-    end
   end
 end
 
 caler = Cal2MapCSV.new
-caler.run
