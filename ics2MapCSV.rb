@@ -1,7 +1,10 @@
 require 'icalendar'
 require 'csv'
+require 'pry'
+
 class Event
 
+  attr_accessor :event
   attr_accessor :location
   attr_accessor :description
   attr_accessor :title
@@ -14,6 +17,7 @@ class Event
 
   def to_row
     # ["address", "title", "description", 'trip', "original_description"]
+    p "#{start} #{@description}"
     [
       @location,
       "#{start} – #{location}",
@@ -27,8 +31,29 @@ class Event
     @event.dtstart.strftime(date_format)
   end
 
-  def isAnArrival?
-    /flight|stay|train/i.match(@event.summary)
+  def isElegible? previous_event
+    /flight|stay|train|bus|boat/i.match(@event.summary) && is_long_enough?(previous_event) &&
+    !/cancel/i.match(@event.summary)
+  end
+
+  def is_home?
+    /genev|gva|zrh/i.match(@location)
+  end
+
+  def from_home?
+    /genev|gva|zrh/i.match(@event.location) && /flight to /i.match(@event.summary)
+  end
+
+  def is_long_enough? previous_event
+      return true if !previous_event
+      p "#{@event.dtstart} - #{@event.dtstart} = #{(previous_event.dtend.to_time - @event.dtstart.to_time)} > 8"
+      res = !previous_event || (@event.dtstart.to_time - previous_event.dtend.to_time)/3600 > 4
+
+      res
+  end
+
+  def is_new_location_as? previous_event
+    previous_event && /#{previous_event.location}/.match(event.location)
   end
 
   %W{summary dtstart dtend}.each do |method|
@@ -56,7 +81,16 @@ class Cal2MapCSV
   def initialize
     @events_count = 0
     @mapped_count = 0
-    cal_file = File.open("cal.ics")
+    raw = nil
+    # not working because the url doesn't return automatic events
+    if ENV['WEB']
+      system( 'curl https://calendar.google.com/calendar/exporticalzip?cexp=d2FsaWR2YkBnbWFpbC5jb20 -O cal_raw.ics')
+    else
+      url = ARGV[0]
+    end
+
+    cal_file = File.open(url)
+
     cals = Icalendar::Calendar.parse(cal_file)
     cal = cals.first
 
@@ -71,22 +105,22 @@ class Cal2MapCSV
 
 
   def add_all_events events, csv
-    last_location = "rdm"
+    previous_event = nil
     @trips_count = 0
-    events.each do |ev|
+    events.sort_by(&:dtstart).each do |ev|
       event = Event.new ev
-      if selected? event
-        if trip_started = @current_trip.nil?
+      if selected?(event, previous_event)
+        if trip_started = @current_trip.nil? || event.from_home?
           @current_trip = @trips_count
           @trips_count += 1
         end
-        if !/#{last_location}/.match(event.location)
+        if !event.is_new_location_as?(previous_event)
           event.trip = @current_trip
-          add_event event, @current_trip, csv
+          csv << event.to_row
           @mapped_count+=1
         end
-        last_location = event.location
-        if /genev|gva/i.match(last_location)
+        previous_event = event
+        if event.is_home?
           @current_trip = nil
         end
       end
@@ -96,16 +130,11 @@ class Cal2MapCSV
 
   private
 
-  def add_event event, trip, csv,
-    row = event.to_row
-    csv << row
-  end
-
-  def selected? event
-    event.isAnArrival? &&
+  def selected? event, previous_event
+    event.isElegible?(previous_event) &&
       (location = event.location) &&
         !location.empty?
   end
 end
 
-caler = Cal2MapCSV.new
+Cal2MapCSV.new
