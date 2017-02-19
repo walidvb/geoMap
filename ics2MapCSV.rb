@@ -17,7 +17,6 @@ class Event
 
   def to_row
     # ["address", "title", "description", 'trip', "original_description"]
-    p "#{start} #{@description}"
     [
       @location,
       "#{start} – #{location}",
@@ -32,8 +31,11 @@ class Event
   end
 
   def isElegible? previous_event
-    /flight|stay|train|bus|boat/i.match(@event.summary) && is_long_enough?(previous_event) &&
-    !/cancel/i.match(@event.summary)
+    if /flight|stay|train|bus|boat/i.match(@event.summary)
+      previous_event.nil? ||
+        is_long_enough?(previous_event)
+
+    end
   end
 
   def is_home?
@@ -45,15 +47,14 @@ class Event
   end
 
   def is_long_enough? previous_event
-      return true if !previous_event
-      p "#{@event.dtstart} - #{@event.dtstart} = #{(previous_event.dtend.to_time - @event.dtstart.to_time)} > 8"
-      res = !previous_event || (@event.dtstart.to_time - previous_event.dtend.to_time)/3600 > 4
 
-      res
+    (@event.dtstart.to_time - previous_event.dtend.to_time)/60 > 4*60
   end
 
-  def is_new_location_as? previous_event
-    previous_event && /#{previous_event.location}/.match(event.location)
+  def is_other_location_than? previous_event
+    return true if previous_event.nil?
+    p "#{previous_event.location} == #{@location} ? #{!/#{previous_event.location}/.match(@location)}"
+    !/#{previous_event.location}/.match(@location)
   end
 
   %W{summary dtstart dtend}.each do |method|
@@ -81,7 +82,7 @@ class Cal2MapCSV
   def initialize
     @events_count = 0
     @mapped_count = 0
-    raw = nil
+
     # not working because the url doesn't return automatic events
     if ENV['WEB']
       system( 'curl https://calendar.google.com/calendar/exporticalzip?cexp=d2FsaWR2YkBnbWFpbC5jb20 -O cal_raw.ics')
@@ -114,15 +115,13 @@ class Cal2MapCSV
           @current_trip = @trips_count
           @trips_count += 1
         end
-        if !event.is_new_location_as?(previous_event)
-          event.trip = @current_trip
-          csv << event.to_row
-          @mapped_count+=1
-        end
+        event.trip = @current_trip
+        csv << event.to_row
+        @mapped_count+=1
         previous_event = event
-        if event.is_home?
-          @current_trip = nil
-        end
+
+        @current_trip = nil if event.is_home?
+
       end
     end
   end
@@ -131,7 +130,9 @@ class Cal2MapCSV
   private
 
   def selected? event, previous_event
-    event.isElegible?(previous_event) &&
+    !/cancel/i.match(event.summary) &&
+      event.isElegible?(previous_event) &&
+      event.is_other_location_than?(previous_event) &&
       (location = event.location) &&
         !location.empty?
   end
