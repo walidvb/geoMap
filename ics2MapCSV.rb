@@ -28,7 +28,7 @@ class Event
   end
 
   def isAnArrival?
-    /flight|stay/i.match(@event.summary)
+    /flight|stay|train/i.match(@event.summary)
   end
 
   %W{summary dtstart dtend}.each do |method|
